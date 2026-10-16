@@ -270,7 +270,7 @@ function Mount-OneDrive {
     $cur = & net use $spec 2>&1 | Select-String "\\$server"
     if ($cur) { return "$spec already connected" }
 
-    & net use $spec $unc /user:"$user" $password /persistent:yes 2>&1 | Out-Null
+    $netOutput = @(& net use $spec $unc $password "/user:$user" /persistent:yes 2>&1)
     $rc = $LASTEXITCODE
 
     switch ($rc) {
@@ -280,7 +280,11 @@ function Mount-OneDrive {
         1219  { "$spec multiple connections not allowed" }
         1326  { "$spec login failed" }
         1314  { "$spec insufficient privileges" }
-        default { "$spec net-use error code $rc" }
+        default {
+            $detail = ($netOutput | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ }) -join ' '
+            if ($detail) { "$spec net-use error code ${rc}: $detail" }
+            else { "$spec net-use error code $rc" }
+        }
     }
 }
 
@@ -417,19 +421,20 @@ function Show-Gui {
         foreach ($entry in $items) {
             $grp = New-Object System.Windows.Forms.GroupBox
             $grp.Text  = "$($entry.label) [$($entry.drive_letter.ToUpper())]"
-            $grp.Size  = New-Object System.Drawing.Size(655, 85)
+            $grp.Size  = New-Object System.Drawing.Size(655, 105)
             $grp.Margin = '2,2,2,2'
 
             $chk = New-Object System.Windows.Forms.CheckBox; $chk.Checked = $true
-            $chk.Dock = 'Left'; $chk.AutoSize = $true
+            $chk.Location = New-Object System.Drawing.Point(12, 37)
+            $chk.Size = New-Object System.Drawing.Size(18, 18)
 
             $info = New-Object System.Windows.Forms.Label
             $info.Text = 'User: {0}{1}Server: {2}{3}Share: {4}' -f
                             $entry.username, [Environment]::NewLine,
                             $entry.server, [Environment]::NewLine,
                             $entry.share_path
-            $info.Location = New-Object System.Drawing.Point(28, 8)
-            $info.MaximumSize = New-Object System.Drawing.Size(600, 60)
+            $info.Location = New-Object System.Drawing.Point(40, 27)
+            $info.MaximumSize = New-Object System.Drawing.Size(595, 70)
             $info.Font      = New-Object System.Drawing.Font('Segoe UI', 8)
             $info.AutoSize  = $true
 
