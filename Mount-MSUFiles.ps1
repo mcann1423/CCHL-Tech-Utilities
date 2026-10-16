@@ -45,7 +45,7 @@ $Script:CredFile      = Join-Path $Script:CredDir 'credentials.json'
 $Script:UserName      = $env:USERNAME
 $Script:ServerBase    = 'msufiles.montclair.edu'
 $Script:DefaultPepper = 'MSU-Files-Pepper-2026-NeverChangeThis1234'
-$Script:AllDrives     = ('A'..'Z')
+$Script:AllDrives     = @(65..90 | ForEach-Object { [char]$_ })
 
 #
 #  Encryption helpers
@@ -203,13 +203,14 @@ function Expand-SharePath {
 
 function Mount-OneDrive {
     param([string]$letter, [string]$sharePath, [string]$user,
-          [string]$password)
+          [string]$password, [string]$server = $Script:ServerBase)
 
+    if (-not $server) { $server = $Script:ServerBase }
     $spec = '{0}:' -f $letter.ToUpper()
-    $unc  = '\\{0}\{1}' -f $Script:ServerBase, (Expand-SharePath $sharePath)
+    $unc  = '\\{0}\{1}' -f $server, (Expand-SharePath $sharePath)
 
     # Already mounted?
-    $cur = & net use $spec 2>&1 | Select-String "\\$Script:ServerBase"
+    $cur = & net use $spec 2>&1 | Select-String "\\$server"
     if ($cur) { return "$spec already connected" }
 
     & net use $spec $unc /user:"$user" $password /persistent:yes 2>&1 | Out-Null
@@ -250,7 +251,7 @@ function Run-Headless {
     }
     foreach ($e in $creds) {
         $msg = Mount-OneDrive -letter $e.drive_letter -sharePath $e.share_path `
-                              -user $e.username -password $e._password
+                              -user $e.username -password $e._password -server $e.server
         $isGood = -not ($msg -match '(error|denied|failed|privilege)')
         $col    = if ($isGood) { 'Green' } else { 'Yellow' }
         Write-Host $msg -ForegroundColor $col
@@ -266,66 +267,6 @@ function Write-LogLine {
     $clr  = if ($good) { 'Green' } elseif ($msg -match '(error|failed|privilege)') { 'Red' } else { 'Yellow' }
     $txtLog.AppendText("{0} [{1}] {2}{3}" -f (Get-Date 'HH:mm:ss'), $tag, $msg, [Environment]::NewLine)
     $txtLog.ScrollToCaret()
-}
-
-#
-#  Helper: add placeholder hint to a textbox via Leave/Enter events
-#
-function Set-Placeholder {
-    param(
-        [System.Windows.Forms.TextBox]$box,
-        [string]$hint,
-        [bool]$isPassword = $false
-    )
-    $box.Tag = $hint                           # store hint as Tag
-    if ($isPassword) {
-        # For password fields: show hint as masked chars, restore real char on focus
-        $box.Text = $hint                      # displayed as dots
-        $box.PasswordChar = '*'                # show dots during hint
-        $originalChar = '*'                    # default char while showing hint
-
-        $box.Add_Enter({
-            param($sender)
-            $tb = $sender
-            if ($tb.Tag -and $tb.PasswordChar -eq '*') {
-                # Currently showing hint - reveal real password input
-                $tb.Text = ''
-                $tb.PlaceholderText = ""         # clear internal
-                $tb.Tag = $tb.Tag + '__REAL__'   # mark entered real-input mode
-            }
-        })
-        $box.Add_Leave({
-            param($sender)
-            $tb = $sender
-            if ($tb.Tag -like '*__REAL__') {
-                # Was in real-input mode - only restore hint if empty
-                if (-not $tb.Text) {
-                    $tb.Text = $tb.Tag.ToString().Replace('__REAL__', '')
-                }
-            } else {
-                # Still showing hint - nothing to do
-            }
-        })
-    } else {
-        $box.Text = $hint
-        $box.ForeColor = [Drawing.Color]::LightGray
-
-        $box.Add_Enter({
-            param($sender)
-            $tb = $sender
-            if ($tb.Text -eq $tb.Tag -and $tb.ForeColor -eq [Drawing.Color]::LightGray) {
-                $tb.Text = ''; $tb.ForeColor = [Drawing.Color]::Black
-            }
-        })
-        $box.Add_Leave({
-            param($sender)
-            $tb = $sender
-            if (-not $tb.Text) {
-                $tb.Text = $tb.Tag
-                $tb.ForeColor = [Drawing.Color]::LightGray
-            }
-        })
-    }
 }
 
 #
@@ -426,14 +367,15 @@ function Show-Gui {
         }
     }
 
-    $btnConnect.Click += {
+    $btnConnect.Add_Click({
         $txtLog.Clear(); $ok=0; $fail=0
         foreach ($dl in $g_Checkboxes.Keys) {
             $item = $g_Checkboxes[$dl]
             if (-not $item.chk.Checked) { continue }
             $m = Mount-OneDrive -letter $item.entry.drive_letter `
                                 -sharePath $item.entry.share_path `
-                                -user $item.entry.username -password $item.entry._password
+                                -user $item.entry.username -password $item.entry._password `
+                                -server $item.entry.server
             $good = -not ($m -match '(error|denied|failed|privilege)')
             if ($good) { $ok++ } else { $fail++ }
             Write-LogLine -msg $m -good:$good
@@ -447,13 +389,13 @@ function Show-Gui {
         [System.Windows.Forms.MessageBox]::Show(
             $summary, 'Mount Complete', 'OK', 'Information'
         )
-    }
+    })
 
-    $btnDisconnect.Click += {
+    $btnDisconnect.Add_Click({
         $txtLog.Clear()
         Unmount-All | ForEach-Object { Write-LogLine -msg $_ -good:$true }
         [System.Windows.Forms.MessageBox]::Show('Done.', 'Unmounted', 'OK', 'Information')
-    }
+    })
 
     #
     #  TAB 2: Manage Credentials
@@ -503,19 +445,19 @@ function Show-Gui {
 
     function LogMgmt { param([string]$m) $logMgmt.AppendText("$m`n"); $logMgmt.ScrollToCaret() }
 
-    $btnAdd.Click += {
-        Save-CredentialForm -newEntry $true -cb {
-            Refresh-CredList; Refresh-Checkboxes; LogMgmt 'Entry added.'
+    $btnAdd.Add_Click({
+        if (Save-CredentialForm -newEntry $true) {
+            Refresh-CredList; Refresh-Checkboxes; Refresh-PwdList; LogMgmt 'Entry added.'
         }
-    }
-    $btnEdit.Click += {
+    })
+    $btnEdit.Add_Click({
         if ($lstCreds.SelectedIndex -lt 0) { return }
         $sel = Read-Credentials[$lstCreds.SelectedIndex]
-        Save-CredentialForm -editEntry $sel -cb {
-            Refresh-CredList; Refresh-Checkboxes; LogMgmt 'Entry updated.'
+        if (Save-CredentialForm -editEntry $sel) {
+            Refresh-CredList; Refresh-Checkboxes; Refresh-PwdList; LogMgmt 'Entry updated.'
         }
-    }
-    $btnDelete.Click += {
+    })
+    $btnDelete.Add_Click({
         if ($lstCreds.SelectedIndex -lt 0) { return }
         $y = [System.Windows.Forms.MessageBox]::Show(
             'Delete this entry?', 'Confirm', 'YesNo', 'Question')
@@ -523,8 +465,8 @@ function Show-Gui {
         $a = Read-Credentials; $a.RemoveAt($lstCreds.SelectedIndex)
         Write-Credentials -entries $a
         Refresh-CredList; Refresh-Checkboxes; LogMgmt 'Entry deleted.'
-    }
-    $btnSaveM.Click += { Refresh-CredList; Refresh-Checkboxes; LogMgmt 'Lists refreshed.' }
+    })
+    $btnSaveM.Add_Click({ Refresh-CredList; Refresh-Checkboxes; Refresh-PwdList; LogMgmt 'Lists refreshed.' })
 
     #
     #  TAB 3: Change Password
@@ -534,7 +476,7 @@ function Show-Gui {
     $banner.Location = New-Object System.Drawing.Point(15, 8)
     $banner.Size    = New-Object System.Drawing.Size(665, 35)
     $banner.ForeColor = [Drawing.Color]::OrangeRed
-    $banner.Font    = New-Object System.Drawing.Font('Segoe UI', 9, 'Bold')
+    $banner.Font    = New-Object System.Drawing.Font -ArgumentList ('Segoe UI', [single]9, [System.Drawing.FontStyle]::Bold)
     $banner.Anchor  = 'Top,Left,Right'
 
     $lstPwd = New-Object System.Windows.Forms.ListBox
@@ -570,13 +512,13 @@ function Show-Gui {
     }
     function LogPwd { param([string]$m) $logPwd.AppendText("$m`n"); $logPwd.ScrollToCaret() }
 
-    $btnUpdatePwd.Click += {
+    $btnUpdatePwd.Add_Click({
         if ($lstPwd.SelectedIndex -lt 0) { return }
         $items = Read-Credentials; $sel = $items[$lstPwd.SelectedIndex]
         Prompt-NewPassword -entry $sel -cb { Refresh-PwdList; Refresh-Checkboxes; LogPwd 'Password updated.' }
-    }
+    })
 
-    $btnWipe.Click += {
+    $btnWipe.Add_Click({
         $y = [System.Windows.Forms.MessageBox]::Show(
             'Permanently erase ALL credentials?  Cannot be undone.',
             'WARNING: Wipe Everything', 'YesNo', 'Warning')
@@ -587,7 +529,7 @@ function Show-Gui {
             'Credential store wiped. Restart the utility to set up again.',
             'Wiped', 'OK', 'Information')
         $form.Close()
-    }
+    })
 
     #
     #  Assemble tabs into tab control
@@ -635,16 +577,15 @@ function Show-Gui {
 
         $addedAnything = $false
         while (-not $addedAnything) {
-            $result = Save-CredentialForm -newEntry $true
-            if ($result) {
+            if (Save-CredentialForm -newEntry $true) {
                 $addedAnything = $true
                 Refresh-Checkboxes; Refresh-CredList; Refresh-PwdList
             } else {
-                # User cancelled - ask if they want to abort
+                # User cancelled - make the choices match the question.
                 $ask = [System.Windows.Forms.MessageBox]::Show(
-                    'No entry was added. Quit now or keep trying?',
+                    'No entry was added. Would you like to try again?',
                     'Continue Setup', 'YesNo', 'Question')
-                if ($ask -eq 'Yes') { break }
+                if ($ask -eq 'No') { break }
             }
         }
         if (-not $addedAnything) { $form.Close(); return }
@@ -656,89 +597,75 @@ function Show-Gui {
 
 #
 #  Sub-form: Add / Edit Credential
-#  Uses Script-scope return variable to avoid closure-callback fragility
 #
-$Script:_EditorResult = $null   # caller reads this after function returns
-
 function Save-CredentialForm {
     param(
         [object]$editEntry,
-        [bool]$newEntry,
-        [scriptblock]$cb
+        [bool]$newEntry
     )
 
-    $Script:_EditorResult = $null  # reset
+    $Script:_EditorResult = $null
 
     $f  = New-Object System.Windows.Forms.Form
     $f.Text     = if ($editEntry) { 'Edit Credential' } else { 'Add New Credential' }
-    $f.Size     = New-Object System.Drawing.Size(500, 400)
+    $f.Size     = New-Object System.Drawing.Size(520, 410)
     $f.StartPosition = 'CenterParent'
     $f.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
     $f.Font     = New-Object System.Drawing.Font('Segoe UI', 9)
+    $f.MinimizeBox = $false
+    $f.MaximizeBox = $false
 
     $fields = @(
-        @{ name='drive_letter';  label='Drive Letter:';   y=18; ph='N' }
-        @{ name='server';       label='Server:';          y=68; ph='msufiles.montclair.edu' }
-        @{ name='share_path';   label='Share Path:';      y=118; ph='<username>' }
-        @{ name='username';     label='Username:';         y=168; ph='admsu\$USERNAME_PLACEHOLDER' }
-        @{ name='label';        label='Label:';            y=218; ph='Faculty Home (N:)' }
+        @{ name='drive_letter'; label='Drive Letter (e.g. N):'; y=20 }
+        @{ name='server'; label='Server (e.g. msufiles.montclair.edu):'; y=60 }
+        @{ name='share_path'; label='Share Path (e.g. facstaff_vol1\<username>):'; y=100 }
+        @{ name='username'; label='Username (e.g. admsu\username):'; y=140 }
+        @{ name='label'; label='Label (e.g. Faculty Home (N:)):'; y=180 }
     )
 
     $txts = @{}
     foreach ($fld in $fields) {
         $lbl = New-Object System.Windows.Forms.Label
-        $lbl.Text       = $fld.label; $lbl.Location = New-Object System.Drawing.Point(15,$fld.y)
-        $lbl.Size       = New-Object System.Drawing.Size(100,20)
+        $lbl.Text       = $fld.label
+        $lbl.Location   = New-Object System.Drawing.Point(15, [int]$fld.y)
+        $lbl.Size       = New-Object System.Drawing.Size(250,20)
         $f.Controls.Add($lbl)
 
         $box = New-Object System.Windows.Forms.TextBox
         $box.Name        = $fld.name
-        $box.Location    = New-Object System.Drawing.Point(125,$fld.y-3)
-        $box.Size        = New-Object System.Drawing.Size(350,25)
+        $box.Location    = New-Object System.Drawing.Point(270, ([int]$fld.y - 3))
+        $box.Size        = New-Object System.Drawing.Size(225,25)
         $f.Controls.Add($box)
         $txts[$fld.name] = $box
     }
 
-    # Placeholder hints via event-based approach (no native PlaceholderText in PS5)
-    Set-Placeholder -box $txts['drive_letter']  -hint 'N'
-    Set-Placeholder -box $txts['server']         -hint 'msufiles.montclair.edu'
-    Set-Placeholder -box $txts['share_path']     -hint '<username>'
-    Set-Placeholder -box $txts['username']        -hint 'admsu\$USERNAME_PLACEHOLDER'
-    Set-Placeholder -box $txts['label']           -hint 'Faculty Home (N:)'
-
-    $hintUsr = New-Object System.Windows.Forms.Label
-    $hintUsr.Text  = 'Use <username> for auto-expansion'
-    $hintUsr.Location = New-Object System.Drawing.Point(125, 140)
-    $hintUsr.Size    = New-Object System.Drawing.Size(350,20)
-    $hintUsr.ForeColor = [Drawing.Color]::Gray
-    $f.Controls.Add($hintUsr)
-
     # Password field
     $lblP = New-Object System.Windows.Forms.Label
-    $lblP.Text = 'Password:'; $lblP.Location = New-Object System.Drawing.Point(15,268); $lblP.Size = New-Object System.Drawing.Size(100,20)
+    $lblP.Text = 'Password:'; $lblP.Location = New-Object System.Drawing.Point(15,225); $lblP.Size = New-Object System.Drawing.Size(250,20)
     $f.Controls.Add($lblP)
     $txtP = New-Object System.Windows.Forms.TextBox
-    $txtP.Name        = 'password'; $txtP.Location = New-Object System.Drawing.Point(125,265)
-    $txtP.Size        = New-Object System.Drawing.Size(350,25); $txtP.PasswordChar = '*'
+    $txtP.Name        = 'password'; $txtP.Location = New-Object System.Drawing.Point(270,222)
+    $txtP.Size        = New-Object System.Drawing.Size(225,25); $txtP.PasswordChar = '*'
     $f.Controls.Add($txtP)
 
     $errLbl = New-Object System.Windows.Forms.Label
     $errLbl.ForeColor = [Drawing.Color]::Red
-    $errLbl.Location  = New-Object System.Drawing.Point(15,300)
-    $errLbl.Size      = New-Object System.Drawing.Size(460,20)
+    $errLbl.Location  = New-Object System.Drawing.Point(15,260)
+    $errLbl.Size      = New-Object System.Drawing.Size(480,45)
     $f.Controls.Add($errLbl)
 
     $btnOk  = New-Object System.Windows.Forms.Button
-    $btnOk.Text  = 'Save'; $btnOk.DialogResult = 'OK'
+    $btnOk.Text  = 'Save'
     $btnOk.Size  = New-Object System.Drawing.Size(90,30)
-    $btnOk.Location = New-Object System.Drawing.Point(260,330)
+    $btnOk.Location = New-Object System.Drawing.Point(305,320)
 
     $btnCancel = New-Object System.Windows.Forms.Button
     $btnCancel.Text = 'Cancel'; $btnCancel.DialogResult = 'Cancel'
     $btnCancel.Size = New-Object System.Drawing.Size(90,30)
-    $btnCancel.Location = New-Object System.Drawing.Point(360,330)
+    $btnCancel.Location = New-Object System.Drawing.Point(405,320)
 
-    $f.Controls.Add(@($btnOk, $btnCancel, $errLbl))
+    $f.Controls.Add($btnOk)
+    $f.Controls.Add($btnCancel)
     $f.AcceptButton = $btnOk; $f.CancelButton = $btnCancel
 
     # Populate existing entry
@@ -751,69 +678,57 @@ function Save-CredentialForm {
         $txtP.Text                 = $editEntry._password
     }
 
-    $result = $f.ShowDialog()
-    if ($result -ne 'OK') { return }
+    $btnOk.Add_Click({
+        $drv  = $txts['drive_letter'].Text.Trim().ToUpper()
+        $srv  = $txts['server'].Text.Trim()
+        $shp  = $txts['share_path'].Text.Trim()
+        $usr  = $txts['username'].Text.Trim()
+        $lblv = $txts['label'].Text.Trim()
+        $pwd  = $txtP.Text
 
-    # Collect values
-    $drv  = $txts['drive_letter'].Text.Trim().ToUpper()
-    $srv  = $txts['server'].Text.Trim()
-    $shp  = $txts['share_path'].Text.Trim()
-    $usr  = $txts['username'].Text.Trim()
-    $lblv = $txts['label'].Text.Trim()
-    $pwd  = $txtP.Text
+        $errs = @()
+        if ($drv -notmatch '^[A-Z]$') { $errs += 'Drive letter must be one letter (A-Z).' }
+        if (-not $srv)  { $errs += 'Server is required.' }
+        if (-not $shp)  { $errs += 'Share path is required.' }
+        if (-not $usr)  { $errs += 'Username is required.' }
+        if (-not $lblv) { $errs += 'Label is required.' }
+        if (-not $pwd)  { $errs += 'Password is required.' }
 
-    # Strip placeholder hints left behind by user not interacting
-    if ($txts['share_path'].Tag -and $txts['share_path'].Text -eq $txts['share_path'].Tag) {
-        $shp = $txts['share_path'].Text.Replace('<username>', $Script:UserName)
-    }
-    if ($txts['username'].Tag -and $txts['username'].Text -eq $txts['username'].Tag) {
-        $usr = $txts['username'].Text.Replace('$USERNAME_PLACEHOLDER', $Script:UserName).Replace('\\','\')
-        if (-not $usr.Contains('\')) { $usr = "admsu\$usr" }
-    }
-
-    $errs = @()
-    if ($drv   -notmatch '^[A-Z]$') { $errs += "Bad drive letter: $drv" }
-    if (-not $srv)                      { $errs += 'Server required' }
-    if (-not $shp)                      { $errs += 'Share path required' }
-    if (-not $usr)                      { $errs += 'Username required' }
-    if (-not $lblv)                     { $errs += 'Label required' }
-    if (-not $pwd)                      { $errs += 'Password required' }
-
-    # Conflict check
-    if (-not $errs) {
-        foreach ($existing in Read-Credentials) {
-            if ($existing.drive_letter -eq $drv) {
-                if (-not $editEntry -or $existing.id -ne $editEntry.id) {
-                    $errs += "$drv already assigned to: $($existing.label)"; break
+        if (-not $errs) {
+            foreach ($existing in @(Read-Credentials)) {
+                if ($existing.drive_letter -eq $drv -and (-not $editEntry -or $existing.id -ne $editEntry.id)) {
+                    $errs += "$drv is already assigned to $($existing.label)."
+                    break
                 }
             }
         }
-    }
 
-    if ($errs.Count) { $errLbl.Text = ($errs -join '; '); return }
-
-    # Build record object
-    $rec = @{
-        id         = if ($editEntry) { $editEntry.id } else { (New-Guid).ToString() }
-        drive_letter = $drv; server = $srv; share_path = $shp
-        username = $usr; label = $lblv; _password = $pwd
-    }
-
-    # Merge into existing list
-    $list = Read-Credentials
-    if ($editEntry) {
-        for ($i = 0; $i -lt $list.Count; $i++) {
-            if ($list[$i].id -eq $editEntry.id) { $list[$i] = $rec; break }
+        if ($errs.Count) {
+            $errLbl.Text = ($errs -join [Environment]::NewLine)
+            return
         }
-    } else {
-        $list += $rec
-    }
-    Write-Credentials -entries $list
 
-    $Script:_EditorResult = $rec   # signal success to caller
+        $rec = [pscustomobject]@{
+            id = if ($editEntry) { $editEntry.id } else { (New-Guid).ToString() }
+            drive_letter = $drv; server = $srv; share_path = $shp
+            username = $usr; label = $lblv; _password = $pwd
+        }
+        $list = @(Read-Credentials)
+        if ($editEntry) {
+            for ($i = 0; $i -lt $list.Count; $i++) {
+                if ($list[$i].id -eq $editEntry.id) { $list[$i] = $rec; break }
+            }
+        } else {
+            $list += $rec
+        }
+        Write-Credentials -entries $list
+        $Script:_EditorResult = $rec
+        $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $f.Close()
+    })
 
-    # Fire caller's callback
-    if ($cb) { & $cb }
+    $f.ShowDialog() | Out-Null
+    return $Script:_EditorResult
 }
 
 #
@@ -859,13 +774,14 @@ function Prompt-NewPassword {
 
     $btnOk  = New-Object System.Windows.Forms.Button
     $btnOk.Text = 'Update'; $btnOk.Size = New-Object System.Drawing.Size(100,30)
-    $btnOk.Location = New-Object System.Drawing.Point(150,180); $btnOk.DialogResult = 'OK'
+    $btnOk.Location = New-Object System.Drawing.Point(150,180)
 
     $btnX = New-Object System.Windows.Forms.Button
     $btnX.Text = 'Cancel'; $btnX.Size = New-Object System.Drawing.Size(90,30)
     $btnX.Location = New-Object System.Drawing.Point(260,180); $btnX.DialogResult = 'Cancel'
 
-    $f.Controls.Add(@($btnOk, $btnX, $errL))
+    $f.Controls.Add($btnOk)
+    $f.Controls.Add($btnX)
     $f.AcceptButton = $btnOk; $f.CancelButton = $btnX
 
     $btnOk.Add_Click({
@@ -887,6 +803,7 @@ function Prompt-NewPassword {
         $errL.Text = ''
         [System.Windows.Forms.MessageBox]::Show('Password updated.','Updated','OK','Information')
         $Script:_PwdResult = $true
+        $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
         $f.Close()
     })
 
