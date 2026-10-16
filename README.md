@@ -19,6 +19,12 @@ Windows utilities maintained by CCHL Technology.
 3. On first use, enter your MSU username and password. The utility creates and reconnects the three standard mappings below.
 4. Mappings use Windows `net use /persistent:yes` and remain available after the utility exits.
 
+### Credential profiles
+
+Create a named profile for each MSU identity, such as `Standard` and `Privileged`. Select a profile and choose **Switch Profile** to disconnect N:, O:, and P: and reconnect them under that profile.
+
+Windows does not allow simultaneous SMB connections to the same server using different usernames. Profiles therefore switch the active identity; they do not keep both identities mounted at once.
+
 For unattended mounting of already saved mappings:
 
 ```powershell

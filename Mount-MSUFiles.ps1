@@ -42,6 +42,7 @@ if ($headless -and -not $NoUI) { $NoUI = $true }
 #  Globals
 $Script:CredDir       = Join-Path $env:USERPROFILE '.msufiles'
 $Script:CredFile      = Join-Path $Script:CredDir 'credentials.json'
+$Script:ProfilesFile  = Join-Path $Script:CredDir 'profiles.json'
 $Script:UserName      = $env:USERNAME
 $Script:ServerBase    = 'msufiles.montclair.edu'
 $Script:DefaultPepper = 'MSU-Files-Pepper-2026-NeverChangeThis1234'
@@ -176,6 +177,51 @@ function Write-Credentials {
     Move-Item -Path $tmp -Destination $Script:CredFile -Force
 }
 
+function Read-Profiles {
+    $meta = Read-Meta
+    if (-not $meta.salt -or -not (Test-Path $Script:ProfilesFile)) { return @() }
+    $key = Get-KeyBytes -salt $meta.salt
+    $out = @()
+    foreach ($p in @((Get-Content $Script:ProfilesFile -Raw | ConvertFrom-Json)) ) {
+        try { $pwd = Decrypt-Value -blob $p.encrypted_password -key $key } catch { continue }
+        $out += [pscustomobject]@{ id=$p.id; name=$p.name; username=$p.username; _password=$pwd }
+    }
+    return $out
+}
+
+function Write-Profiles {
+    param([object[]]$profiles)
+    $meta = Read-Meta
+    $key = Get-KeyBytes -salt $meta.salt
+    $disk = @()
+    foreach ($p in $profiles) {
+        $disk += [pscustomobject]@{ id=$p.id; name=$p.name; username=$p.username; encrypted_password=(Encrypt-Value -plaintext $p._password -key $key) }
+    }
+    ($disk | ConvertTo-Json -Depth 5) | Set-Content $Script:ProfilesFile -Encoding UTF8
+}
+
+function Get-DriveMappings {
+    param([object]$profile)
+    $pathUser = $profile.username
+    if ($pathUser.Contains('\')) { $pathUser = $pathUser.Substring($pathUser.LastIndexOf('\') + 1) }
+    $networkUser = if ($profile.username.Contains('\')) { $profile.username } else { "admsu\$($profile.username)" }
+    return @(
+        [pscustomobject]@{ id=(New-Guid).ToString(); drive_letter='N'; server=$Script:ServerBase; share_path="facstaff_vol1\$pathUser"; username=$networkUser; label='Faculty/Staff Home (N:)'; _password=$profile._password }
+        [pscustomobject]@{ id=(New-Guid).ToString(); drive_letter='O'; server=$Script:ServerBase; share_path='groupshare_vol1\groups'; username=$networkUser; label='Group Shares (O:)'; _password=$profile._password }
+        [pscustomobject]@{ id=(New-Guid).ToString(); drive_letter='P'; server=$Script:ServerBase; share_path="pubweb_vol1\$pathUser"; username=$networkUser; label='Public Web Root (P:)'; _password=$profile._password }
+    )
+}
+
+function Activate-Profile {
+    param([object]$profile)
+    $records = Get-DriveMappings -profile $profile
+    Write-Credentials -entries $records
+    $meta = Read-Meta
+    $meta | Add-Member -NotePropertyName active_profile_id -NotePropertyValue $profile.id -Force
+    Write-Meta -obj $meta
+    return Reconnect-SavedDrives -entries $records
+}
+
 function Init-CredDir {
     if (-not (Test-Path $Script:CredDir)) {
         New-Item -ItemType Directory -Path $Script:CredDir -Force | Out-Null
@@ -188,6 +234,18 @@ function Init-CredDir {
         $rng.Dispose()
         $meta = @{ version = 1; salt = [Convert]::ToBase64String($salt) }
         Write-Meta -obj $meta
+    }
+    if (-not (Test-Path $Script:ProfilesFile)) {
+        $legacy = @(Read-Credentials)
+        if ($legacy.Count) {
+            $user = $legacy[0].username
+            $name = 'Default'
+            $profile = [pscustomobject]@{ id=(New-Guid).ToString(); name=$name; username=$user; _password=$legacy[0]._password }
+            Write-Profiles -profiles @($profile)
+            $meta = Read-Meta
+            $meta | Add-Member -NotePropertyName active_profile_id -NotePropertyValue $profile.id -Force
+            Write-Meta -obj $meta
+        }
     }
 }
 
@@ -290,7 +348,7 @@ function Show-Gui {
     #  Top-level controls
     $form       = New-Object System.Windows.Forms.Form
     $form.Text      = 'Mount MSU Files'
-    $form.Size      = New-Object System.Drawing.Size(720, 520)
+    $form.Size      = New-Object System.Drawing.Size(720, 575)
     $form.StartPosition = 'CenterScreen'
     $form.Font      = New-Object System.Drawing.Font('Segoe UI', 9)
 
@@ -475,6 +533,7 @@ function Show-Gui {
             'Clear all saved MSU Files credentials?', 'Confirm', 'YesNo', 'Warning')
         if ($y -ne 'Yes') { return }
         if (Test-Path $Script:CredFile) { Remove-Item -Path $Script:CredFile -Force }
+        if (Test-Path $Script:ProfilesFile) { Remove-Item -Path $Script:ProfilesFile -Force }
         Refresh-CredList; Refresh-Checkboxes; Refresh-PwdList; LogMgmt 'Saved credentials cleared.'
     })
     $btnSaveM.Add_Click({ Refresh-CredList; Refresh-Checkboxes; Refresh-PwdList; LogMgmt 'Lists refreshed.' })
@@ -571,12 +630,64 @@ function Show-Gui {
     $foot.Location = New-Object System.Drawing.Point(15, 420)
     $foot.AutoSize = $true; $foot.ForeColor = [Drawing.Color]::Gray
 
+    $profileLabel = New-Object System.Windows.Forms.Label
+    $profileLabel.Text = 'Active profile:'
+    $profileLabel.Location = New-Object System.Drawing.Point(15, 452)
+    $profileLabel.AutoSize = $true
+    $profileCombo = New-Object System.Windows.Forms.ComboBox
+    $profileCombo.Location = New-Object System.Drawing.Point(105, 448)
+    $profileCombo.Size = New-Object System.Drawing.Size(230, 25)
+    $profileCombo.DropDownStyle = 'DropDownList'
+    $btnSwitchProfile = New-Object System.Windows.Forms.Button
+    $btnSwitchProfile.Text = 'Switch Profile'
+    $btnSwitchProfile.Location = New-Object System.Drawing.Point(345, 446)
+    $btnSwitchProfile.Size = New-Object System.Drawing.Size(110, 30)
+    $btnNewProfile = New-Object System.Windows.Forms.Button
+    $btnNewProfile.Text = 'Add Profile'
+    $btnNewProfile.Location = New-Object System.Drawing.Point(465, 446)
+    $btnNewProfile.Size = New-Object System.Drawing.Size(100, 30)
+
+    function Refresh-ProfileCombo {
+        $profileCombo.Items.Clear()
+        $profiles = @(Read-Profiles)
+        $meta = Read-Meta
+        $index = 0; $selected = -1
+        foreach ($profile in $profiles) {
+            [void]$profileCombo.Items.Add($profile.name)
+            if ($profile.id -eq $meta.active_profile_id) { $selected = $index }
+            $index++
+        }
+        if ($selected -ge 0) { $profileCombo.SelectedIndex = $selected }
+        elseif ($profileCombo.Items.Count) { $profileCombo.SelectedIndex = 0 }
+    }
+
+    $btnSwitchProfile.Add_Click({
+        if ($profileCombo.SelectedIndex -lt 0) { return }
+        $profiles = @(Read-Profiles)
+        $profile = $profiles | Where-Object { $_.name -eq $profileCombo.SelectedItem.ToString() } | Select-Object -First 1
+        if (-not $profile) { return }
+        $results = Activate-Profile -profile $profile
+        Refresh-Checkboxes; Refresh-CredList; Refresh-PwdList; Refresh-ProfileCombo
+        [System.Windows.Forms.MessageBox]::Show(
+            "Activated profile '$($profile.name)'. N:, O:, and P: were disconnected and remounted.`r`n`r`n$($results -join [Environment]::NewLine)",
+            'Profile Switched', 'OK', 'Information') | Out-Null
+    })
+    $btnNewProfile.Add_Click({
+        if (Save-CredentialForm -newEntry $true) {
+            Refresh-Checkboxes; Refresh-CredList; Refresh-PwdList; Refresh-ProfileCombo
+        }
+    })
+
     $form.Controls.Add($tc)
     $form.Controls.Add($foot)
+    $form.Controls.Add($profileLabel) | Out-Null
+    $form.Controls.Add($profileCombo) | Out-Null
+    $form.Controls.Add($btnSwitchProfile) | Out-Null
+    $form.Controls.Add($btnNewProfile) | Out-Null
     $form.AcceptButton = $btnConnect
 
     #  Bootstrap
-    Refresh-Checkboxes; Refresh-CredList; Refresh-PwdList
+    Refresh-Checkboxes; Refresh-CredList; Refresh-PwdList; Refresh-ProfileCombo
 
     # First run: open the two-field setup dialog directly.
     $initItems = Read-Credentials
@@ -613,7 +724,7 @@ function Save-CredentialForm {
 
     $f  = New-Object System.Windows.Forms.Form
     $f.Text     = 'Set Up MSU Files'
-    $f.Size     = New-Object System.Drawing.Size(560, 345)
+    $f.Size     = New-Object System.Drawing.Size(560, 385)
     $f.StartPosition = 'CenterParent'
     $f.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
     $f.Font     = New-Object System.Drawing.Font('Segoe UI', 9)
@@ -626,57 +737,78 @@ function Save-CredentialForm {
     $info.Size = New-Object System.Drawing.Size(510, 75)
     $f.Controls.Add($info) | Out-Null
 
+    $lblProfile = New-Object System.Windows.Forms.Label
+    $lblProfile.Text = 'Profile Name:'
+    $lblProfile.Location = New-Object System.Drawing.Point(18, 110)
+    $lblProfile.Size = New-Object System.Drawing.Size(130, 20)
+    $f.Controls.Add($lblProfile) | Out-Null
+    $txtProfile = New-Object System.Windows.Forms.TextBox
+    $txtProfile.Location = New-Object System.Drawing.Point(155, 107)
+    $txtProfile.Size = New-Object System.Drawing.Size(365, 25)
+    $f.Controls.Add($txtProfile) | Out-Null
+
     $lblUser = New-Object System.Windows.Forms.Label
     $lblUser.Text = 'MSU Username:'
-    $lblUser.Location = New-Object System.Drawing.Point(18, 110)
+    $lblUser.Location = New-Object System.Drawing.Point(18, 150)
     $lblUser.Size = New-Object System.Drawing.Size(130, 20)
     $f.Controls.Add($lblUser) | Out-Null
 
     $txtUser = New-Object System.Windows.Forms.TextBox
-    $txtUser.Location = New-Object System.Drawing.Point(155, 107)
+    $txtUser.Location = New-Object System.Drawing.Point(155, 147)
     $txtUser.Size = New-Object System.Drawing.Size(365, 25)
     $f.Controls.Add($txtUser) | Out-Null
 
     # Password field
     $lblP = New-Object System.Windows.Forms.Label
-    $lblP.Text = 'Password:'; $lblP.Location = New-Object System.Drawing.Point(18,150); $lblP.Size = New-Object System.Drawing.Size(130,20)
+    $lblP.Text = 'Password:'; $lblP.Location = New-Object System.Drawing.Point(18,190); $lblP.Size = New-Object System.Drawing.Size(130,20)
     $f.Controls.Add($lblP) | Out-Null
     $txtP = New-Object System.Windows.Forms.TextBox
-    $txtP.Name        = 'password'; $txtP.Location = New-Object System.Drawing.Point(155,147)
+    $txtP.Name        = 'password'; $txtP.Location = New-Object System.Drawing.Point(155,187)
     $txtP.Size        = New-Object System.Drawing.Size(365,25); $txtP.PasswordChar = '*'
     $f.Controls.Add($txtP) | Out-Null
 
     $errLbl = New-Object System.Windows.Forms.Label
     $errLbl.ForeColor = [Drawing.Color]::Red
-    $errLbl.Location  = New-Object System.Drawing.Point(18,185)
+    $errLbl.Location  = New-Object System.Drawing.Point(18,225)
     $errLbl.Size      = New-Object System.Drawing.Size(500,35)
     $f.Controls.Add($errLbl) | Out-Null
 
     $btnOk  = New-Object System.Windows.Forms.Button
     $btnOk.Text  = 'Save and Connect'
     $btnOk.Size  = New-Object System.Drawing.Size(120,30)
-    $btnOk.Location = New-Object System.Drawing.Point(300,240)
+    $btnOk.Location = New-Object System.Drawing.Point(300,280)
 
     $btnCancel = New-Object System.Windows.Forms.Button
     $btnCancel.Text = 'Cancel'; $btnCancel.DialogResult = 'Cancel'
     $btnCancel.Size = New-Object System.Drawing.Size(90,30)
-    $btnCancel.Location = New-Object System.Drawing.Point(430,240)
+    $btnCancel.Location = New-Object System.Drawing.Point(430,280)
 
     $f.Controls.Add($btnOk) | Out-Null
     $f.Controls.Add($btnCancel) | Out-Null
     $f.AcceptButton = $btnOk; $f.CancelButton = $btnCancel
 
-    $existing = @(Read-Credentials)
-    if ($existing.Count) {
-        $txtUser.Text = $existing[0].username
-        $txtP.Text = $existing[0]._password
+    $profiles = @(Read-Profiles)
+    $meta = Read-Meta
+    $active = $profiles | Where-Object { $_.id -eq $meta.active_profile_id } | Select-Object -First 1
+    if (-not $newEntry -and $active) {
+        $txtProfile.Text = $active.name
+        $txtUser.Text = $active.username
+        $txtP.Text = $active._password
+    } elseif (-not $newEntry -and $profiles.Count) {
+        $txtProfile.Text = $profiles[0].name
+        $txtUser.Text = $profiles[0].username
+        $txtP.Text = $profiles[0]._password
+    } else {
+        $txtProfile.Text = 'Standard'
     }
 
     $btnOk.Add_Click({
+        $profileName = $txtProfile.Text.Trim()
         $usr  = $txtUser.Text.Trim()
         $pwd  = $txtP.Text
 
         $errs = @()
+        if (-not $profileName) { $errs += 'Profile name is required.' }
         if (-not $usr)  { $errs += 'Username is required.' }
         if (-not $pwd)  { $errs += 'Password is required.' }
 
@@ -685,30 +817,20 @@ function Save-CredentialForm {
             return
         }
 
-        $pathUser = $usr
-        if ($pathUser.Contains('\')) { $pathUser = $pathUser.Substring($pathUser.LastIndexOf('\') + 1) }
-        $networkUser = if ($usr.Contains('\')) { $usr } else { "admsu\$usr" }
-        $defaults = @(
-            @{ drive='N'; share="facstaff_vol1\$pathUser"; label='Faculty/Staff Home (N:)' }
-            @{ drive='O'; share='groupshare_vol1\groups'; label='Group Shares (O:)' }
-            @{ drive='P'; share="pubweb_vol1\$pathUser"; label='Public Web Root (P:)' }
-        )
-        $records = @()
-        foreach ($mapping in $defaults) {
-            $id = (New-Guid).ToString()
-            foreach ($old in @(Read-Credentials)) {
-                if ($old.drive_letter -eq $mapping.drive) { $id = $old.id; break }
-            }
-            $records += [pscustomobject]@{
-                id = $id; drive_letter = $mapping.drive; server = $Script:ServerBase
-                share_path = $mapping.share; username = $networkUser; label = $mapping.label; _password = $pwd
-            }
+        $allProfiles = @(Read-Profiles)
+        $match = $allProfiles | Where-Object { $_.name -ieq $profileName } | Select-Object -First 1
+        $profileId = if ($match) { $match.id } else { (New-Guid).ToString() }
+        $profile = [pscustomobject]@{ id=$profileId; name=$profileName; username=$usr; _password=$pwd }
+        $updated = @()
+        foreach ($old in $allProfiles) {
+            if ($old.id -ne $profileId) { $updated += $old }
         }
-        Write-Credentials -entries $records
-        $Script:_EditorResult = $records
-        $results = Reconnect-SavedDrives -entries $records
+        $updated += $profile
+        Write-Profiles -profiles $updated
+        $Script:_EditorResult = $profile
+        $results = Activate-Profile -profile $profile
         [System.Windows.Forms.MessageBox]::Show(
-            "Saved credentials and refreshed N:, O:, and P:.`r`n`r`n$($results -join [Environment]::NewLine)",
+            "Activated profile '$profileName' and refreshed N:, O:, and P:.`r`n`r`n$($results -join [Environment]::NewLine)",
             'MSU Files Setup', 'OK', 'Information') | Out-Null
         $f.DialogResult = [System.Windows.Forms.DialogResult]::OK
         $f.Close()
