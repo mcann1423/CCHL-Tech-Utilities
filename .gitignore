@@ -1,0 +1,8 @@
+# Per-user credential data created by Mount-MSUFiles.ps1
+.msufiles/
+credentials.json
+meta.json
+
+# PowerShell editor and runtime artifacts
+*.user
+*.tmp
