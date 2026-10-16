@@ -1,7 +1,7 @@
 #Requires -Version 5.0
 <#
     .SYNOPSIS
-        Mount MSU Files — encrypted credential manager with GUI for SMB mounts.
+        Mount MSU Files - encrypted credential manager with GUI for SMB mounts.
 
     .DESCRIPTION
         One-shot PowerShell utility providing:
@@ -26,7 +26,7 @@
 
 param([switch]$NoUI, [switch]$Uninstall)
 
-# ── Pre-flight ──────────────────────────────────────────────────────────────
+#  Pre-flight
 if ($PSVersionTable.PSVersion.Major -lt 5) {
     Write-Host 'PowerShell 5.0+ is required.' -ForegroundColor Red; exit 1
 }
@@ -39,7 +39,7 @@ try {
 } catch { $headless = $true }
 if ($headless -and -not $NoUI) { $NoUI = $true }
 
-# ── Globals ─────────────────────────────────────────────────────────────────
+#  Globals
 $Script:CredDir       = Join-Path $env:USERPROFILE '.msufiles'
 $Script:CredFile      = Join-Path $Script:CredDir 'credentials.json'
 $Script:UserName      = $env:USERNAME
@@ -47,9 +47,9 @@ $Script:ServerBase    = 'msufiles.montclair.edu'
 $Script:DefaultPepper = 'MSU-Files-Pepper-2026-NeverChangeThis1234'
 $Script:AllDrives     = ('A'..'Z')
 
-# ════════════════════════════════════════════════════════════════════════════
+#
 #  Encryption helpers
-# ════════════════════════════════════════════════════════════════════════════
+#
 function Get-KeyBytes {
     param([string]$salt)
     $pbkdf2 = New-Object Security.Cryptography.Rfc2898DeriveBytes(
@@ -95,9 +95,9 @@ function Decrypt-Value {
     return [Text.Encoding]::UTF8.GetString($pt)
 }
 
-# ════════════════════════════════════════════════════════════════════════════
+#
 #  Credential file I/O
-# ════════════════════════════════════════════════════════════════════════════
+#
 function Read-Meta {
     $f = Join-Path $Script:CredDir 'meta.json'
     if (-not (Test-Path $f)) { return $null }
@@ -192,9 +192,9 @@ function Init-CredDir {
     }
 }
 
-# ════════════════════════════════════════════════════════════════════════════
+#
 #  Mount / Unmount
-# ════════════════════════════════════════════════════════════════════════════
+#
 function Expand-SharePath {
     param([string]$p)
     $p -replace 'USERNAME_PLACEHOLDER', $Script:UserName `
@@ -217,8 +217,8 @@ function Mount-OneDrive {
 
     switch ($rc) {
         0     { "$spec mounted -> $unc" }
-        5     { "$spec access denied — check username / password" }
-        86    { "$spec syntax error — verify UNC path" }
+        5     { "$spec access denied - check username / password" }
+        86    { "$spec syntax error - verify UNC path" }
         1219  { "$spec multiple connections not allowed" }
         1326  { "$spec login failed" }
         1314  { "$spec insufficient privileges" }
@@ -239,9 +239,9 @@ function Unmount-All {
     return $results
 }
 
-# ════════════════════════════════════════════════════════════════════════════
+#
 #  Headless mode
-# ════════════════════════════════════════════════════════════════════════════
+#
 function Run-Headless {
     $creds = Read-Credentials
     if (-not $creds.Count) {
@@ -257,9 +257,9 @@ function Run-Headless {
     }
 }
 
-# ════════════════════════════════════════════════════════════════════════════
-#  Logging helpers (direct textbox operations — no undefined wrapper needed)
-# ════════════════════════════════════════════════════════════════════════════
+#
+#  Logging helpers (direct textbox operations - no undefined wrapper needed)
+#
 function Write-LogLine {
     param([string]$msg, [switch]$good)
     $tag  = if ($good) { '+' } else { '-' }
@@ -268,9 +268,9 @@ function Write-LogLine {
     $txtLog.ScrollToCaret()
 }
 
-# ════════════════════════════════════════════════════════════════════════════
+#
 #  Helper: add placeholder hint to a textbox via Leave/Enter events
-# ════════════════════════════════════════════════════════════════════════════
+#
 function Set-Placeholder {
     param(
         [System.Windows.Forms.TextBox]$box,
@@ -288,7 +288,7 @@ function Set-Placeholder {
             param($sender)
             $tb = $sender
             if ($tb.Tag -and $tb.PasswordChar -eq '*') {
-                # Currently showing hint — reveal real password input
+                # Currently showing hint - reveal real password input
                 $tb.Text = ''
                 $tb.PlaceholderText = ""         # clear internal
                 $tb.Tag = $tb.Tag + '__REAL__'   # mark entered real-input mode
@@ -298,12 +298,12 @@ function Set-Placeholder {
             param($sender)
             $tb = $sender
             if ($tb.Tag -like '*__REAL__') {
-                # Was in real-input mode — only restore hint if empty
+                # Was in real-input mode - only restore hint if empty
                 if (-not $tb.Text) {
                     $tb.Text = $tb.Tag.ToString().Replace('__REAL__', '')
                 }
             } else {
-                # Still showing hint — nothing to do
+                # Still showing hint - nothing to do
             }
         })
     } else {
@@ -328,11 +328,11 @@ function Set-Placeholder {
     }
 }
 
-# ════════════════════════════════════════════════════════════════════════════
-#  GUI — Main form
-# ════════════════════════════════════════════════════════════════════════════
+#
+#  GUI - Main form
+#
 function Show-Gui {
-    # ── Top-level controls ────────────────────────────────────────────────
+    #  Top-level controls
     $form       = New-Object System.Windows.Forms.Form
     $form.Text      = 'Mount MSU Files'
     $form.Size      = New-Object System.Drawing.Size(720, 520)
@@ -344,9 +344,9 @@ function Show-Gui {
     $tc.Size      = New-Object System.Drawing.Size(695, 400)
     $tc.Anchor    = 'Top,Left,Right,Bottom'
 
-    # ══════════════════════════════════════════════════════════════════════
+    #
     #  TAB 1: Connect / Disconnect
-    # ══════════════════════════════════════════════════════════════════════
+    #
     $flow = New-Object System.Windows.Forms.FlowLayoutPanel
     $flow.Location = New-Object System.Drawing.Point(15, 15)
     $flow.Size     = New-Object System.Drawing.Size(665, 260)
@@ -361,11 +361,11 @@ function Show-Gui {
     $txtLog.Anchor       = 'Top,Left,Right,Bottom'
 
     $btnConnect = New-Object System.Windows.Forms.Button
-    $btnConnect.Text = 'Connect Selected →'; $btnConnect.Size = New-Object System.Drawing.Size(150, 35)
+    $btnConnect.Text = 'Connect Selected ->'; $btnConnect.Size = New-Object System.Drawing.Size(150, 35)
     $btnConnect.Location = New-Object System.Drawing.Point(15, 365)
 
     $btnDisconnect = New-Object System.Windows.Forms.Button
-    $btnDisconnect.Text = 'Disconnect All ↓'; $btnDisconnect.Size = New-Object System.Drawing.Size(150, 35)
+    $btnDisconnect.Text = 'Disconnect All v'; $btnDisconnect.Size = New-Object System.Drawing.Size(150, 35)
     $btnDisconnect.Location = New-Object System.Drawing.Point(175, 365)
 
     # State dictionary keyed by drive letter
@@ -386,7 +386,7 @@ function Show-Gui {
             $lblMain.AutoSize = $true
 
             $btnFirst = New-Object System.Windows.Forms.Button
-            $btnFirst.Text = '+ Add First Entry →'
+            $btnFirst.Text = '+ Add First Entry ->'
             $btnFirst.Location = New-Object System.Drawing.Point(10, 45)
             $btnFirst.Size = New-Object System.Drawing.Size(160, 28)
             $btnFirst.Add_Click({
@@ -442,7 +442,7 @@ function Show-Gui {
         if (-not $anyChecked) {
             Write-LogLine -msg 'No drives selected.'; return
         }
-        $summary = "Connection complete — success: {0}, failed: {1}" -f $ok, $fail
+        $summary = "Connection complete - success: {0}, failed: {1}" -f $ok, $fail
         Write-LogLine -msg $summary -good:($fail -eq 0)
         [System.Windows.Forms.MessageBox]::Show(
             $summary, 'Mount Complete', 'OK', 'Information'
@@ -455,9 +455,9 @@ function Show-Gui {
         [System.Windows.Forms.MessageBox]::Show('Done.', 'Unmounted', 'OK', 'Information')
     }
 
-    # ══════════════════════════════════════════════════════════════════════
+    #
     #  TAB 2: Manage Credentials
-    # ══════════════════════════════════════════════════════════════════════
+    #
     $lstCreds = New-Object System.Windows.Forms.ListBox
     $lstCreds.Location = New-Object System.Drawing.Point(15, 45)
     $lstCreds.Size     = New-Object System.Drawing.Size(665, 200)
@@ -526,9 +526,9 @@ function Show-Gui {
     }
     $btnSaveM.Click += { Refresh-CredList; Refresh-Checkboxes; LogMgmt 'Lists refreshed.' }
 
-    # ══════════════════════════════════════════════════════════════════════
+    #
     #  TAB 3: Change Password
-    # ══════════════════════════════════════════════════════════════════════
+    #
     $banner = New-Object System.Windows.Forms.Label
     $banner.Text    = 'WARNING: This utility manages your MSU Files password only. It cannot change your NetID / AD password.'
     $banner.Location = New-Object System.Drawing.Point(15, 8)
@@ -563,7 +563,7 @@ function Show-Gui {
     function Refresh-PwdList {
         $lstPwd.Items.Clear()
         foreach ($e in Read-Credentials) {
-            $lstPwd.Items.Add("$( $e.label ) [$( $e.drive_letter.ToUpper() )] — $( $e.username )")
+            $lstPwd.Items.Add("$( $e.label ) [$( $e.drive_letter.ToUpper() )] - $( $e.username )")
         }
         if (-not (Read-Credentials).Count) { $lstPwd.Items.Add('(none)'); $lstPwd.Enabled = $false }
         else { $lstPwd.Enabled = $true }
@@ -589,9 +589,9 @@ function Show-Gui {
         $form.Close()
     }
 
-    # ══════════════════════════════════════════════════════════════════════
+    #
     #  Assemble tabs into tab control
-    # ══════════════════════════════════════════════════════════════════════
+    #
     $tab1 = New-Object System.Windows.Forms.TabPage
     $tab1.Text = 'Connect / Disconnect'
     $tabLbl = New-Object System.Windows.Forms.Label
@@ -622,7 +622,7 @@ function Show-Gui {
     $form.Controls.Add($foot)
     $form.AcceptButton = $btnConnect
 
-    # ── Bootstrap ─────────────────────────────────────────────────────────
+    #  Bootstrap
     Refresh-Checkboxes; Refresh-CredList; Refresh-PwdList
 
     # FIRST-RUN WIZARD: if zero credentials, auto-open Add dialog
@@ -640,7 +640,7 @@ function Show-Gui {
                 $addedAnything = $true
                 Refresh-Checkboxes; Refresh-CredList; Refresh-PwdList
             } else {
-                # User cancelled — ask if they want to abort
+                # User cancelled - ask if they want to abort
                 $ask = [System.Windows.Forms.MessageBox]::Show(
                     'No entry was added. Quit now or keep trying?',
                     'Continue Setup', 'YesNo', 'Question')
@@ -654,10 +654,10 @@ function Show-Gui {
     Refresh-Checkboxes
 }
 
-# ════════════════════════════════════════════════════════════════════════════
+#
 #  Sub-form: Add / Edit Credential
 #  Uses Script-scope return variable to avoid closure-callback fragility
-# ════════════════════════════════════════════════════════════════════════════
+#
 $Script:_EditorResult = $null   # caller reads this after function returns
 
 function Save-CredentialForm {
@@ -816,10 +816,10 @@ function Save-CredentialForm {
     if ($cb) { & $cb }
 }
 
-# ════════════════════════════════════════════════════════════════════════════
+#
 #  Sub-form: Change Password
 #  Same pattern: Script-scope return flag
-# ════════════════════════════════════════════════════════════════════════════
+#
 $Script:_PwdResult = $null
 
 function Prompt-NewPassword {
@@ -828,7 +828,7 @@ function Prompt-NewPassword {
     $Script:_PwdResult = $false
 
     $f  = New-Object System.Windows.Forms.Form
-    $f.Text     = "Update Password — $($entry.label)"
+    $f.Text     = "Update Password - $($entry.label)"
     $f.Size     = New-Object System.Drawing.Size(420, 260)
     $f.StartPosition = 'CenterParent'
     $f.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
@@ -894,9 +894,9 @@ function Prompt-NewPassword {
     if ($Script:_PwdResult -and $cb) { & $cb }
 }
 
-# ════════════════════════════════════════════════════════════════════════════
+#
 #  Entry point
-# ════════════════════════════════════════════════════════════════════════════
+#
 if ($Uninstall) {
     if (Test-Path $Script:CredDir) {
         Remove-Item -Path $Script:CredDir -Recurse -Force
