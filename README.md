@@ -16,8 +16,8 @@ Windows utilities maintained by CCHL Technology.
 
 1. Download or clone this repository.
 2. Double-click `Mount-MSUFiles.bat`, or run it from a Command Prompt.
-3. On first use, add a drive mapping and credentials in the interface.
-4. Select mappings and connect them. Mappings use Windows `net use /persistent:yes` and remain available after the utility exits.
+3. On first use, enter your MSU username and password. The utility creates and reconnects the three standard mappings below.
+4. Mappings use Windows `net use /persistent:yes` and remain available after the utility exits.
 
 For unattended mounting of already saved mappings:
 
@@ -35,9 +35,9 @@ To remove the locally saved credential data:
 
 | Drive | Share |
 | --- | --- |
-| N: | Faculty/staff home directory |
-| O: | Group shares |
-| P: | Public web root |
+| N: | `\\msufiles.montclair.edu\facstaff_vol1\<username>` |
+| O: | `\\msufiles.montclair.edu\groupshare_vol1\groups` |
+| P: | `\\msufiles.montclair.edu\pubweb_vol1\<username>` |
 
 ### Credential data and security
 
